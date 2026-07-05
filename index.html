@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+<title>Control de Pagos · Chivas FAFI 2026</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<style>
+  html { -webkit-text-size-adjust: 100%; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  /* Ocultar scroll horizontal feo en móvil */
+  ::-webkit-scrollbar { height: 6px; width: 6px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+
+<!-- ==================== CONFIGURACIÓN ==================== -->
+<script>
+  /*
+   * 1) Comparte tu Google Sheet: botón "Compartir" > "Cualquier persona con el enlace" > Lector.
+   * 2) Copia el ID de la URL:
+   *    https://docs.google.com/spreadsheets/d/  ESTE_ES_EL_ID  /edit#gid=0
+   * 3) Pégalo en SPREADSHEET_ID y escribe el nombre EXACTO de la pestaña en SHEET_NAME.
+   *    (Si lo dejas vacío, la app usa los datos de demostración incluidos.)
+   */
+  const CONFIG = {
+    SPREADSHEET_ID: "1mFoMTSO5hd7slo8SLMz51PJ0kyiLJ3BsLr0CueAsoPg", // ID de tu Sheet
+    SHEET_NAME: "",                     // vacío = primera pestaña (Respuestas del formulario)
+    EVENTO: "Chivas FAFI 2026 · Sistemas",
+    PRECIO_POR_PERSONA: 10,             // valor de cada boleto/pago
+    AUTO_REFRESH_SEG: 30,               // 0 = desactivar auto actualización
+
+    // --- EDICIÓN (escribir de vuelta al Sheet) ---
+    // Pega la URL /exec de tu Apps Script (ver apps-script.gs). Vacío = solo lectura.
+    APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbwIB5asqvgU3dXv3u19u8R9DmIJR5UyCYQavFKBVqr2x5VssKGxzVkYYWbINUSAIOJu/exec",
+    TOKEN: "chivas2026"                 // debe ser IGUAL al TOKEN del apps-script.gs
+  };
+</script>
+
+<!-- ==================== HEADER ==================== -->
+<header class="bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg sticky top-0 z-20">
+  <div class="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
+    <div class="min-w-0">
+      <h1 class="text-lg sm:text-2xl font-bold leading-tight truncate">🐐 Control de Pagos</h1>
+      <p id="subtitulo" class="text-emerald-100 text-xs sm:text-sm truncate">Cargando…</p>
+    </div>
+    <button id="btnRefrescar" title="Actualizar ahora"
+      class="shrink-0 bg-white/15 hover:bg-white/25 active:scale-95 transition rounded-full p-2.5">
+      <svg id="iconoRefrescar" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<main class="max-w-3xl mx-auto px-3 sm:px-4 py-4 space-y-4">
+
+  <!-- ==================== TARJETAS RESUMEN ==================== -->
+  <section class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
+    <div class="bg-white rounded-2xl shadow-sm p-3 sm:p-4 text-center">
+      <p class="text-2xl sm:text-3xl font-extrabold text-slate-700" id="statTotal">–</p>
+      <p class="text-[11px] sm:text-xs text-slate-500 mt-0.5 font-medium">Total</p>
+    </div>
+    <div class="bg-white rounded-2xl shadow-sm p-3 sm:p-4 text-center">
+      <p class="text-2xl sm:text-3xl font-extrabold text-emerald-600" id="statPagados">–</p>
+      <p class="text-[11px] sm:text-xs text-slate-500 mt-0.5 font-medium">Pagados</p>
+    </div>
+    <div class="bg-white rounded-2xl shadow-sm p-3 sm:p-4 text-center">
+      <p class="text-2xl sm:text-3xl font-extrabold text-amber-500" id="statPendientes">–</p>
+      <p class="text-[11px] sm:text-xs text-slate-500 mt-0.5 font-medium">Pendientes</p>
+    </div>
+    <div class="bg-white rounded-2xl shadow-sm p-3 sm:p-4 text-center">
+      <p class="text-xl sm:text-2xl font-extrabold text-teal-600" id="statRecaudado">–</p>
+      <p class="text-[11px] sm:text-xs text-slate-500 mt-0.5 font-medium">Recaudado</p>
+    </div>
+  </section>
+
+  <!-- ==================== BARRA DE ACCIONES ==================== -->
+  <section class="bg-white rounded-2xl shadow-sm p-3 space-y-3">
+    <div class="relative">
+      <svg class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z"/></svg>
+      <input id="buscador" type="search" inputmode="search" placeholder="Buscar por nombre…"
+        class="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-100 focus:bg-white border border-transparent focus:border-emerald-400 outline-none text-sm" />
+    </div>
+    <div class="flex items-center gap-2 justify-between">
+      <div class="flex gap-1.5 flex-1 overflow-x-auto">
+        <button data-filtro="todos" class="filtro-btn px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap bg-emerald-600 text-white">Todos</button>
+        <button data-filtro="pagado" class="filtro-btn px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap bg-slate-100 text-slate-600">Pagados</button>
+        <button data-filtro="pendiente" class="filtro-btn px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap bg-slate-100 text-slate-600">Pendientes</button>
+      </div>
+      <button id="btnReporte"
+        class="shrink-0 flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 active:scale-95 transition text-white text-xs font-semibold px-3 py-1.5 rounded-full">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        Reporte
+      </button>
+    </div>
+  </section>
+
+  <!-- ==================== ESTADO / ERROR ==================== -->
+  <div id="aviso" class="hidden rounded-2xl px-4 py-3 text-sm"></div>
+
+  <!-- ==================== LISTA DE ALUMNOS ==================== -->
+  <section id="lista" class="space-y-2.5"></section>
+
+  <footer class="text-center text-[11px] text-slate-400 py-4">
+    <span id="fuenteDato"></span>
+  </footer>
+</main>
+
+<!-- ==================== MODAL REPORTE ==================== -->
+<div id="modal" class="hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+  <div class="bg-slate-100 w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[92vh] flex flex-col">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+      <h2 class="font-bold text-slate-700">Reporte para compartir</h2>
+      <button id="cerrarModal" class="text-slate-400 hover:text-slate-700 text-2xl leading-none px-2">&times;</button>
+    </div>
+
+    <!-- Área que se convierte en imagen -->
+    <div class="overflow-y-auto p-4">
+      <div id="reporteCanvasArea" class="bg-white rounded-2xl overflow-hidden shadow-inner">
+        <div id="reporte" class="p-5" style="width:100%;">
+          <div class="bg-gradient-to-br from-emerald-600 to-teal-700 -mx-5 -mt-5 mb-4 px-5 py-5 text-white">
+            <p class="text-xs uppercase tracking-widest text-emerald-100 font-semibold">Reporte de pagos</p>
+            <h3 id="repTitulo" class="text-xl font-extrabold leading-tight mt-0.5">Chivas FAFI 2026</h3>
+            <p id="repFecha" class="text-emerald-100 text-xs mt-1"></p>
+          </div>
+          <div class="grid grid-cols-3 gap-2 mb-4 text-center">
+            <div class="bg-slate-50 rounded-xl py-2.5">
+              <p id="repTotal" class="text-2xl font-extrabold text-slate-700">0</p>
+              <p id="repTotalLabel" class="text-[10px] text-slate-500 font-medium">Total</p>
+            </div>
+            <div id="cajaPagados" class="bg-emerald-50 rounded-xl py-2.5">
+              <p id="repPagados" class="text-2xl font-extrabold text-emerald-600">0</p>
+              <p class="text-[10px] text-slate-500 font-medium">Pagados</p>
+            </div>
+            <div id="cajaPendientes" class="bg-amber-50 rounded-xl py-2.5">
+              <p id="repPendientes" class="text-2xl font-extrabold text-amber-500">0</p>
+              <p class="text-[10px] text-slate-500 font-medium">Pendientes</p>
+            </div>
+          </div>
+          <div id="cajaRecaudado" class="bg-teal-600 text-white rounded-xl px-4 py-3 mb-4 flex items-center justify-between">
+            <span class="text-sm font-medium">Total recaudado</span>
+            <span id="repRecaudado" class="text-xl font-extrabold">$0</span>
+          </div>
+          <div id="repLista" class="space-y-1"></div>
+          <p class="text-center text-[10px] text-slate-400 mt-4 pt-3 border-t border-slate-100">
+            Generado desde Control de Pagos
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Botones de acción -->
+    <div class="p-4 pt-2 grid grid-cols-2 gap-2.5 border-t border-slate-200">
+      <button id="btnCopiar"
+        class="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition text-white font-semibold py-3 rounded-xl">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+        <span id="txtCopiar">Copiar</span>
+      </button>
+      <button id="btnDescargar"
+        class="flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-800 active:scale-95 transition text-white font-semibold py-3 rounded-xl">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+        Descargar
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-sm px-4 py-2.5 rounded-full shadow-lg"></div>
+
+<script>
+/* =========================================================
+   DATOS DE DEMOSTRACIÓN (tus datos actuales del Excel)
+   Se usan si no configuras SPREADSHEET_ID.
+   ========================================================= */
+const DATOS_DEMO = [
+  { nombre:"AGUILAR CASTRO BYRON STIVEN", curso:"QUINTO A", obs:"PAGARÁ Y ASISTIRÁ", pagado:false },
+  { nombre:"WALTER XAVIER MONCAYO HEREDERO", curso:"QUINTO A", obs:"PAGARÁ Y ASISTIRÁ", pagado:true },
+  { nombre:"AREVALO ESPIN CARLOS MANUEL", curso:"QUINTO A", obs:"PAGARÁ Y ASISTIRÁ", pagado:false },
+  { nombre:"MOREIRA SANTANA CARLOS ANTONIO", curso:"QUINTO A", obs:"PAGARÁ Y ASISTIRÁ", pagado:false },
+  { nombre:"MOREIRA SALAZAR EDUARDO HUMBERTO", curso:"QUINTO A", obs:"PAGARÁ Y ASISTIRÁ", pagado:false },
+  { nombre:"MERA SALAS JORGE ISAAC", curso:"QUINTO A", obs:"PAGARÁ", pagado:true },
+  { nombre:"ACUÑA VALVERDE ALISON SOLANGE", curso:"QUINTO A", obs:"PAGARÁ Y ASISTIRÁ", pagado:true },
+  { nombre:"STEFANY MONTENEGRO", curso:"QUINTO A", obs:"PAGARÁ Y ASISTIRÁ", pagado:false },
+  { nombre:"CARLOS MUÑOZ", curso:"QUINTO A", obs:"PAGARÁ Y ASISTIRÁ", pagado:false },
+  { nombre:"LUIS AVILEZ", curso:"QUINTO A", obs:"PAGARÁ Y ASISTIRÁ", pagado:true },
+  { nombre:"NAYA NICOLE ONOFRE ROCAFUERTE", curso:"QUINTO A", obs:"PAGARÁ Y ASISTIRÁ", pagado:false },
+  { nombre:"WILLIAM BRYAM FRANCO VALENCIA", curso:"QUINTO A", obs:"PAGARÁ Y ASISTIRÁ", pagado:false },
+  { nombre:"MILTON ALEJANDRO GAVILANEZ MONTEROS", curso:"QUINTO A", obs:"PAGARÁ Y ASISTIRÁ", pagado:false },
+  { nombre:"CHIMBORAZO ESCOBAR DAYAN ESTUARDO", curso:"QUINTO A", obs:"PAGARÁ Y ASISTIRÁ", pagado:true },
+  { nombre:"GUILCAPI VASQUEZ LUIS ROBERTO", curso:"QUINTO A", obs:"PAGARÁ Y ASISTIRÁ", pagado:false },
+  { nombre:"UMANANTE TORRES JEREMY ALEXANDER", curso:"QUINTO A", obs:"PAGARÁ Y ASISTIRÁ", pagado:true },
+];
+
+/* =========================================================
+   ESTADO
+   ========================================================= */
+let ALUMNOS = [];
+let filtroActual = "todos";
+let usandoDemo = false;
+let timerRefresco = null;
+
+const $ = (id) => document.getElementById(id);
+
+/* =========================================================
+   CARGA DESDE GOOGLE SHEETS (endpoint gviz, sin API key)
+   ========================================================= */
+function urlGviz() {
+  const id = CONFIG.SPREADSHEET_ID.trim();
+  const hoja = CONFIG.SHEET_NAME.trim();
+  const base = `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json`;
+  return hoja ? base + "&sheet=" + encodeURIComponent(hoja) : base;
+}
+
+// Localiza una columna por su encabezado (sin importar mayúsculas/acentos)
+function normalizar(s) {
+  return (s || "").toString().normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
+}
+
+function parseGviz(texto) {
+  // La respuesta viene envuelta: google.visualization.Query.setResponse({...});
+  const inicio = texto.indexOf("{");
+  const fin = texto.lastIndexOf("}");
+  const json = JSON.parse(texto.substring(inicio, fin + 1));
+  const cols = json.table.cols.map(c => normalizar(c.label));
+  const rows = json.table.rows || [];
+
+  // Detecta índices por encabezado (con respaldos por posición del Excel)
+  const idxNombre = cols.findIndex(c => c.includes("APELLIDOS") || c.includes("NOMBRE"));
+  const idxCurso  = cols.findIndex(c => c.includes("CURSO"));
+  const idxObs    = cols.findIndex(c => c.includes("OBSERVAC"));
+  const idxPago   = cols.findIndex(c => c === "PAGO" || c.includes("PAGO"));
+
+  const cNombre = idxNombre >= 0 ? idxNombre : 1;
+  const cCurso  = idxCurso  >= 0 ? idxCurso  : 2;
+  const cObs    = idxObs    >= 0 ? idxObs    : 4;
+  const cPago   = idxPago   >= 0 ? idxPago   : 5;
+
+  const val = (fila, i) => (fila.c[i] && fila.c[i].v != null) ? fila.c[i].v : "";
+
+  return rows
+    .map((r, i) => {
+      const nombre = (val(r, cNombre) || "").toString().trim();
+      const pagoTxt = normalizar(val(r, cPago));
+      return {
+        // fila real en la hoja: la fila 1 es el encabezado, por eso i + 2
+        fila: i + 2,
+        nombre,
+        curso: (val(r, cCurso) || "").toString().trim(),
+        obs: (val(r, cObs) || "").toString().trim(),
+        pagado: pagoTxt.includes("PAGADO") && !pagoTxt.includes("PENDIENTE")
+      };
+    })
+    .filter(a => a.nombre); // ignora filas vacías
+}
+
+async function cargarDatos() {
+  const icono = $("iconoRefrescar");
+  icono.classList.add("animate-spin");
+
+  if (!CONFIG.SPREADSHEET_ID.trim()) {
+    usandoDemo = true;
+    ALUMNOS = DATOS_DEMO.slice();
+    render();
+    mostrarAviso("info", "Mostrando datos de demostración. Pega el ID de tu Google Sheet en la configuración del archivo para ver los datos en vivo.");
+    icono.classList.remove("animate-spin");
+    return;
+  }
+
+  try {
+    const resp = await fetch(urlGviz(), { cache: "no-store" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const texto = await resp.text();
+    ALUMNOS = parseGviz(texto);
+    usandoDemo = false;
+    ocultarAviso();
+    render();
+  } catch (e) {
+    console.error(e);
+    if (ALUMNOS.length === 0) {
+      usandoDemo = true;
+      ALUMNOS = DATOS_DEMO.slice();
+      render();
+    }
+    mostrarAviso("error", "No se pudo conectar con el Google Sheet. Verifica que esté compartido como «Cualquiera con el enlace: Lector» y que el ID y el nombre de la pestaña sean correctos.");
+  } finally {
+    icono.classList.remove("animate-spin");
+  }
+}
+
+/* =========================================================
+   RENDER
+   ========================================================= */
+function calcular(lista = ALUMNOS) {
+  const total = lista.length;
+  const pagados = lista.filter(a => a.pagado).length;
+  const pendientes = total - pagados;
+  const recaudado = pagados * CONFIG.PRECIO_POR_PERSONA;
+  return { total, pagados, pendientes, recaudado };
+}
+
+// Lista según el filtro activo (Todos/Pagados/Pendientes) + búsqueda
+function obtenerFiltrados() {
+  const q = normalizar($("buscador").value);
+  return ALUMNOS.filter(a => {
+    if (filtroActual === "pagado" && !a.pagado) return false;
+    if (filtroActual === "pendiente" && a.pagado) return false;
+    if (q && !normalizar(a.nombre).includes(q)) return false;
+    return true;
+  });
+}
+
+const ETIQUETA_FILTRO = { todos: "Todos", pagado: "Pagados", pendiente: "Pendientes" };
+
+function render() {
+  const { total, pagados, pendientes, recaudado } = calcular();
+  $("statTotal").textContent = total;
+  $("statPagados").textContent = pagados;
+  $("statPendientes").textContent = pendientes;
+  $("statRecaudado").textContent = "$" + recaudado;
+  $("subtitulo").textContent = CONFIG.EVENTO +
+    (usandoDemo ? " · demo" : (puedeEditar() ? " · en vivo · editable" : " · en vivo"));
+  $("fuenteDato").textContent = usandoDemo
+    ? "Datos de demostración"
+    : "Conectado a Google Sheets · " + CONFIG.SHEET_NAME;
+
+  const lista = obtenerFiltrados();
+
+  const cont = $("lista");
+  if (lista.length === 0) {
+    cont.innerHTML = `<div class="text-center text-slate-400 py-10 text-sm">Sin resultados</div>`;
+    return;
+  }
+
+  const editable = puedeEditar();
+
+  cont.innerHTML = lista.map(a => {
+    const color = a.pagado ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700";
+    const texto = a.pagado ? "✅ Pagado" : "⏳ Pendiente";
+    const badge = editable && a.fila
+      ? `<button data-fila="${a.fila}" class="badge-toggle shrink-0 inline-flex items-center gap-1 ${color} text-xs font-semibold px-2.5 py-1 rounded-full active:scale-95 transition ring-1 ring-inset ring-black/5" title="Tocar para cambiar">${texto} ✎</button>`
+      : `<span class="shrink-0 inline-flex items-center gap-1 ${color} text-xs font-semibold px-2.5 py-1 rounded-full">${texto}</span>`;
+    return `
+      <div class="bg-white rounded-2xl shadow-sm p-3.5 flex items-center justify-between gap-3">
+        <div class="min-w-0">
+          <p class="font-semibold text-sm leading-tight break-words">${escape(a.nombre)}</p>
+          <p class="text-xs text-slate-400 mt-0.5">${escape(a.curso)}${a.obs ? " · " + escape(a.obs) : ""}</p>
+        </div>
+        ${badge}
+      </div>`;
+  }).join("");
+}
+
+function escape(s) {
+  return (s || "").toString().replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
+}
+
+/* =========================================================
+   EDICIÓN: escribir el estado de vuelta al Google Sheet
+   (vía Apps Script Web App; ver apps-script.gs)
+   ========================================================= */
+let escriturasPendientes = 0;
+
+function puedeEditar() {
+  return !!CONFIG.APPS_SCRIPT_URL.trim() && !usandoDemo;
+}
+
+async function cambiarEstado(fila, botonEl) {
+  const alumno = ALUMNOS.find(a => a.fila === fila);
+  if (!alumno) return;
+
+  const nuevoPagado = !alumno.pagado;
+  alumno.pagado = nuevoPagado;   // actualización optimista
+  escriturasPendientes++;
+  if (botonEl) { botonEl.disabled = true; botonEl.textContent = "Guardando…"; }
+  render();
+
+  try {
+    // Apps Script no envía cabeceras CORS: usamos no-cors + text/plain (sin preflight).
+    // No podemos leer la respuesta, así que confirmamos recargando después.
+    await fetch(CONFIG.APPS_SCRIPT_URL, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ token: CONFIG.TOKEN, fila: fila, pagado: nuevoPagado })
+    });
+    toast(nuevoPagado ? "✅ Marcado como Pagado" : "⏳ Marcado como Pendiente");
+    // Deja que Google procese el cambio y luego sincroniza con la hoja real.
+    setTimeout(() => { escriturasPendientes--; cargarDatos(); }, 1500);
+  } catch (e) {
+    console.error(e);
+    alumno.pagado = !nuevoPagado; // revertir
+    escriturasPendientes--;
+    toast("No se pudo guardar. Revisa tu conexión.");
+    render();
+  }
+}
+
+/* =========================================================
+   AVISOS / TOAST
+   ========================================================= */
+function mostrarAviso(tipo, msg) {
+  const el = $("aviso");
+  const estilos = {
+    error: "bg-red-50 text-red-700 border border-red-200",
+    info: "bg-sky-50 text-sky-700 border border-sky-200"
+  };
+  el.className = "rounded-2xl px-4 py-3 text-sm " + (estilos[tipo] || estilos.info);
+  el.textContent = msg;
+  el.classList.remove("hidden");
+}
+function ocultarAviso() { $("aviso").classList.add("hidden"); }
+
+let toastTimer;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add("hidden"), 2600);
+}
+
+/* =========================================================
+   REPORTE -> IMAGEN
+   ========================================================= */
+function prepararReporte() {
+  const lista = obtenerFiltrados();
+  const { total, pagados, pendientes, recaudado } = calcular(lista);
+  const etq = ETIQUETA_FILTRO[filtroActual] || "Todos";
+
+  $("repTitulo").textContent = CONFIG.EVENTO;
+  $("repFecha").textContent =
+    "Filtro: " + etq + " · " + new Date().toLocaleString("es-EC", { dateStyle: "long", timeStyle: "short" });
+
+  // Muestra sólo los cuadros relevantes según el filtro
+  $("cajaPagados").style.display   = (filtroActual === "pendiente") ? "none" : "";
+  $("cajaPendientes").style.display = (filtroActual === "pagado")    ? "none" : "";
+  $("cajaRecaudado").style.display  = (filtroActual === "pendiente") ? "none" : "";
+
+  $("repTotal").textContent = total;
+  $("repTotalLabel").textContent = (filtroActual === "todos") ? "Total" : etq;
+  $("repPagados").textContent = pagados;
+  $("repPendientes").textContent = pendientes;
+  $("repRecaudado").textContent = "$" + recaudado;
+
+  $("repLista").innerHTML = lista.map(a => `
+    <div class="flex items-center justify-between text-xs py-1.5 border-b border-slate-100">
+      <span class="text-slate-700 pr-2 truncate">${escape(a.nombre)}</span>
+      <span class="shrink-0 font-semibold ${a.pagado ? "text-emerald-600" : "text-amber-500"}">
+        ${a.pagado ? "✅ Pagado" : "⏳ Pendiente"}
+      </span>
+    </div>`).join("");
+}
+
+async function generarCanvas() {
+  const nodo = $("reporteCanvasArea");
+  return await html2canvas(nodo, {
+    scale: Math.min(3, (window.devicePixelRatio || 1) + 1),
+    backgroundColor: "#ffffff",
+    useCORS: true,
+    logging: false
+  });
+}
+
+function canvasABlob(canvas) {
+  return new Promise((resolve) => {
+    if (canvas.toBlob) canvas.toBlob(b => resolve(b), "image/png");
+    else {
+      // Respaldo para navegadores sin toBlob
+      const dataUrl = canvas.toDataURL("image/png");
+      const bin = atob(dataUrl.split(",")[1]);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      resolve(new Blob([arr], { type: "image/png" }));
+    }
+  });
+}
+
+let ultimoCanvas = null;
+
+async function descargarImagen() {
+  try {
+    const canvas = ultimoCanvas || (ultimoCanvas = await generarCanvas());
+    const blob = await canvasABlob(canvas);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "reporte-pagos-" + new Date().toISOString().slice(0, 10) + ".png";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast("Imagen descargada");
+  } catch (e) {
+    console.error(e);
+    toast("No se pudo generar la imagen");
+  }
+}
+
+/* ---- COPIA ROBUSTA con múltiples respaldos ---- */
+async function copiarImagen() {
+  const txt = $("txtCopiar");
+  const original = txt.textContent;
+  txt.textContent = "Copiando…";
+  try {
+    const canvas = ultimoCanvas || (ultimoCanvas = await generarCanvas());
+    const blob = await canvasABlob(canvas);
+
+    // Método 1: Async Clipboard API (Chrome/Edge/Android modernos, requiere contexto seguro)
+    if (navigator.clipboard && window.ClipboardItem) {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+        toast("✅ Imagen copiada al portapapeles");
+        return;
+      } catch (e1) {
+        console.warn("Clipboard API falló, probando respaldo:", e1);
+      }
+    }
+
+    // Método 2: ClipboardItem con promesa (Safari)
+    if (navigator.clipboard && window.ClipboardItem) {
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({ "image/png": Promise.resolve(blob) })
+        ]);
+        toast("✅ Imagen copiada al portapapeles");
+        return;
+      } catch (e2) {
+        console.warn("Respaldo Safari falló:", e2);
+      }
+    }
+
+    // Método 3: execCommand sobre imagen editable (navegadores antiguos / file://)
+    const ok = await copiarConExecCommand(canvas);
+    if (ok) { toast("✅ Imagen copiada"); return; }
+
+    // Método 4: no se pudo copiar -> descarga automática como salida garantizada
+    toast("Tu navegador no permite copiar imágenes aquí. Descargando…");
+    await descargarImagen();
+  } catch (e) {
+    console.error(e);
+    toast("No se pudo copiar. Usa «Descargar».");
+  } finally {
+    txt.textContent = original;
+  }
+}
+
+function copiarConExecCommand(canvas) {
+  return new Promise((resolve) => {
+    try {
+      const div = document.createElement("div");
+      div.contentEditable = "true";
+      div.style.position = "fixed";
+      div.style.left = "-99999px";
+      div.style.opacity = "0";
+      const img = document.createElement("img");
+      img.src = canvas.toDataURL("image/png");
+      div.appendChild(img);
+      document.body.appendChild(div);
+
+      const rango = document.createRange();
+      rango.selectNode(div);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(rango);
+
+      let exito = false;
+      try { exito = document.execCommand("copy"); } catch (_) { exito = false; }
+
+      sel.removeAllRanges();
+      div.remove();
+      resolve(exito);
+    } catch (e) {
+      resolve(false);
+    }
+  });
+}
+
+/* =========================================================
+   EVENTOS
+   ========================================================= */
+$("buscador").addEventListener("input", render);
+
+// Tocar la insignia de estado para cambiar Pagado <-> Pendiente
+$("lista").addEventListener("click", (e) => {
+  const btn = e.target.closest(".badge-toggle");
+  if (!btn || btn.disabled) return;
+  cambiarEstado(Number(btn.dataset.fila), btn);
+});
+
+document.querySelectorAll(".filtro-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    filtroActual = btn.dataset.filtro;
+    document.querySelectorAll(".filtro-btn").forEach(b => {
+      b.className = "filtro-btn px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap bg-slate-100 text-slate-600";
+    });
+    btn.className = "filtro-btn px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap bg-emerald-600 text-white";
+    render();
+  });
+});
+
+$("btnRefrescar").addEventListener("click", cargarDatos);
+
+$("btnReporte").addEventListener("click", () => {
+  ultimoCanvas = null;           // fuerza regenerar con datos frescos
+  prepararReporte();
+  $("modal").classList.remove("hidden");
+});
+$("cerrarModal").addEventListener("click", () => $("modal").classList.add("hidden"));
+$("modal").addEventListener("click", (e) => { if (e.target === $("modal")) $("modal").classList.add("hidden"); });
+
+$("btnCopiar").addEventListener("click", copiarImagen);
+$("btnDescargar").addEventListener("click", descargarImagen);
+
+/* =========================================================
+   INICIO
+   ========================================================= */
+cargarDatos();
+if (CONFIG.AUTO_REFRESH_SEG > 0) {
+  timerRefresco = setInterval(() => {
+    // No refrescar con el reporte abierto ni con cambios en curso (evita revertir la UI)
+    if ($("modal").classList.contains("hidden") && escriturasPendientes === 0) cargarDatos();
+  }, CONFIG.AUTO_REFRESH_SEG * 1000);
+}
+</script>
+</body>
+</html>
